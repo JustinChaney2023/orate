@@ -21,9 +21,11 @@ model = WhisperModel(MODEL, device="cpu", compute_type="int8", cpu_threads=8)
 # beam_size=1 is faster on CPU; bump later for accuracy
 segments, info = model.transcribe(
     str(audio_path),
-    beam_size=1,
-    vad_filter=True,                # helps with long files / silence
-    condition_on_previous_text=True # better continuity
+    beam_size=2,                    # change to 5 if translating
+    #vad_filter=True,                # helps with long files / silence
+    condition_on_previous_text=True, # better continuity
+    #task="translate",
+    #temperature=[0.0, 0.2, 0.4]
 )
 
 print(f"Detected language: {info.language} (p={info.language_probability:.2f})")
