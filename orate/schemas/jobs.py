@@ -11,5 +11,8 @@ class JobCreateResponse(BaseModel):
 class JobGetResponse(BaseModel):
     job_id: str
     status: JobStatus
+    progress: float
+    stage: Optional[str] = None
+    eta_seconds: Optional[float] = None
     result_ref: Optional[str] = None
     error: Optional[str] = None

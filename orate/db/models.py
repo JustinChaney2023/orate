@@ -1,4 +1,3 @@
-# orate/db/models.py
 from __future__ import annotations
 from datetime import datetime
 from enum import Enum
@@ -7,16 +6,17 @@ from sqlmodel import SQLModel, Field
 
 # ---------- Recording ----------
 class Recording(SQLModel, table=True):
-    id: str = Field(primary_key=True)              # recording_id (uuid hex)
-    original_ext: str                              # ".mp3", ".wav", etc.
-    original_path: str                             # absolute or repo-relative path
+    id: str = Field(primary_key=True)
+    original_ext: str
+    original_path: str
     duration_s: float
     sha256: str
     created_at: datetime
 
+
 # ---------- Transcript ----------
 class Transcript(SQLModel, table=True):
-    id: str = Field(primary_key=True)              # transcript_id (uuid hex)
+    id: str = Field(primary_key=True)
     recording_id: str = Field(foreign_key="recording.id")
     text_path: str
     srt_path: Optional[str] = None
@@ -28,6 +28,7 @@ class Transcript(SQLModel, table=True):
     duration_s: Optional[float] = None
     created_at: datetime
 
+
 # ---------- Job ----------
 class JobStatus(str, Enum):
     queued = "queued"
@@ -35,12 +36,20 @@ class JobStatus(str, Enum):
     done = "done"
     error = "error"
 
+
 class Job(SQLModel, table=True):
-    id: str = Field(primary_key=True)              # job_id (uuid hex)
-    kind: str                                      # "transcribe"|"summarize"|...
-    payload_json: str                              # small JSON string
+    id: str = Field(primary_key=True)
+    kind: str
+    payload_json: str
     status: JobStatus = Field(default=JobStatus.queued)
-    result_ref: Optional[str] = None               # e.g., transcript_id
+
+    # progress tracking
+    progress: float = Field(default=0.0)          # 0..1
+    stage: Optional[str] = None                   # e.g. "loading_model", "decoding"
+    eta_seconds: Optional[float] = None
+    started_at: Optional[datetime] = None
+
+    result_ref: Optional[str] = None
     error: Optional[str] = None
     created_at: datetime
     updated_at: datetime
