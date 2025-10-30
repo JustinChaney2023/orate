@@ -1,5 +1,6 @@
 // frontend/src/App.tsx
 import { useEffect, useRef, useState } from "react";
+import type { JobGetResponse } from "./api/client";
 import {
   uploadAudio,
   startTranscription,
@@ -40,7 +41,7 @@ export default function App() {
       return;
     }
     try {
-      const job = await startTranscription(recordingId);
+      const job = await startTranscription(recordingId!);
       setJobId(job.job_id);
       setJob(null);
     } catch (e: any) {
@@ -49,42 +50,41 @@ export default function App() {
   }
 
   // poll job if we have one
-  useEffect(() => {
-    if (!jobId) return;
-    let cancelled = false;
+useEffect(() => {
+  if (!jobId) return;           // runtime guard
+  let cancelled = false;
+  const jid: string = jobId;     // <= non-null local copy
 
-    async function poll() {
-      try {
-        const j = await getJob(jobId);
-        if (cancelled) return;
-        setJob(j);
-        if (j.status === "done" && j.result_ref) {
-          // fetch transcript
-          const tr = await getTranscript(j.result_ref);
-          if (!cancelled) setTranscriptText(tr.text || "");
-          return; // stop polling
-        }
-        if (j.status === "error") {
-          alert(`Job error: ${j.error || "unknown"}`);
-          return;
-        }
-        // keep polling
-        setTimeout(poll, 1500);
-      } catch (e: any) {
-        console.error(e);
-        setTimeout(poll, 2000);
+  async function poll(id: string) {
+    try {
+      const j = await getJob(id);   // id is always string here
+      if (cancelled) return;
+      setJob(j);
+
+      if (j.status === "done" && j.result_ref) {
+        const tr = await getTranscript(j.result_ref);
+        if (!cancelled) setTranscriptText(tr.text || "");
+        return; // stop polling
       }
+      if (j.status === "error") {
+        alert(`Job error: ${j.error || "unknown"}`);
+        return;
+      }
+      setTimeout(() => poll(id), 1500);
+    } catch (e) {
+      console.error(e);
+      setTimeout(() => poll(id), 2000);
     }
+  }
 
-    poll();
-    return () => {
-      cancelled = true;
-    };
-  }, [jobId]);
+  poll(jid);
+  return () => { cancelled = true; };
+}, [jobId]);
+
 
   return (
     <div style={{ fontFamily: "system-ui, sans-serif", maxWidth: 800, margin: "40px auto", padding: 16 }}>
-      <h1>Orate (Frontend)</h1>
+      <h1>Orate</h1>
 
       <section style={{ marginBottom: 24 }}>
         <h2>1) Upload audio</h2>
