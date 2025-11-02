@@ -1,68 +1,81 @@
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  --bg: #0f1115;
+  --panel: #12141b;
+  --panel-2: #151826;
+  --text: #e7e9ee;
+  --muted: #9aa3b2;
+  --accent: #6ea8fe;
+  --accent-2: #9b87f5;
+  --border: #232634;
+  --danger: #ff6b6b;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
-}
-
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; }
 body {
   margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial;
+}
+
+.shell { display: grid; grid-template-columns: 300px 1fr; height: 100%; }
+
+.sidebar {
+  border-right: 1px solid var(--border);
+  padding: 16px;
+  background: linear-gradient(180deg, #0f1115, #10131a);
+  overflow: hidden;
   display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
+  flex-direction: column;
 }
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
-}
+.brand { font-weight: 700; letter-spacing: .5px; margin-bottom: 12px; }
+.sidebar-section { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.sidebar-title { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .1em; margin: 8px 0; }
 
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
+.list { overflow: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); }
+.list-item {
+  width: 100%; text-align: left; background: transparent; border: 0; color: var(--text);
+  padding: 12px; border-bottom: 1px solid var(--border); cursor: pointer;
 }
-button:hover {
-  border-color: #646cff;
+.list-item:last-child { border-bottom: 0; }
+.list-item:hover { background: var(--panel-2); }
+.list-item.active { outline: 1px solid var(--accent); background: #121a2a; }
+.item-title {
+  font-size: 14px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px;
 }
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
-}
+.item-meta { color: var(--muted); font-size: 12px; }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
+.empty { color: var(--muted); padding: 16px; text-align: center; }
+
+.main { display: flex; flex-direction: column; min-width: 0; }
+.topbar {
+  height: 56px; display: flex; align-items: center; padding: 0 20px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, #0f1115, #10131a);
+}
+.topbar-title { font-weight: 600; }
+
+.panel {
+  margin: 16px; padding: 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--panel);
+}
+.panel-title { color: var(--muted); font-size: 12px; margin-bottom: 8px; text-transform: uppercase; letter-spacing: .08em; }
+
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.btn {
+  background: #1b2030; color: var(--text); border: 1px solid var(--border);
+  padding: 8px 12px; border-radius: 10px; cursor: pointer;
+}
+.btn:hover { background: #1e2436; }
+.btn.primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); border-color: transparent; color: #0c1020; font-weight: 600; }
+
+.hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+.error { color: var(--danger); }
+
+.transcript-box {
+  width: 100%; background: #0f1320; color: var(--text);
+  border: 1px solid var(--border); border-radius: 12px;
+  padding: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  resize: vertical;
 }

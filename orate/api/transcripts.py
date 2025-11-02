@@ -1,12 +1,48 @@
 from __future__ import annotations
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import timezone
 
 from orate.db import crud
-from orate.schemas.transcripts import TranscriptGetResponse
+from orate.schemas.transcripts import (
+    TranscriptGetResponse,
+    TranscriptListResponse,
+    TranscriptItem,
+    TranscriptUpdateRequest,
+    TranscriptUpdateResponse,
+)
 
 router = APIRouter(prefix="/api/transcripts", tags=["transcripts"])
+
+
+@router.get("", response_model=TranscriptListResponse)
+def list_transcripts(limit: int = Query(50, ge=1, le=200), recording_id: str | None = None):
+    rows = crud.list_transcripts_for_recording(recording_id, limit) if recording_id else crud.list_transcripts(limit)
+    items: list[TranscriptItem] = []
+
+    for t in rows:
+        preview = ""
+        try:
+            if t.text_path and Path(t.text_path).exists():
+                preview = Path(t.text_path).read_text(encoding="utf-8")[:200].replace("\n", " ")
+        except Exception:
+            preview = ""
+
+        items.append(
+            TranscriptItem(
+                id=t.id,
+                recording_id=t.recording_id,
+                created_at=t.created_at.replace(tzinfo=timezone.utc).isoformat(),
+                language=t.language,
+                model=t.model,
+                text_preview=preview,
+                title=t.title,
+            )
+        )
+
+    return TranscriptListResponse(items=items)
+
 
 @router.get("/{transcript_id}", response_model=TranscriptGetResponse)
 def get_transcript(transcript_id: str, include_text: bool = True):
@@ -18,7 +54,7 @@ def get_transcript(transcript_id: str, include_text: bool = True):
     if include_text and tr.text_path and Path(tr.text_path).exists():
         text_content = Path(tr.text_path).read_text(encoding="utf-8")
 
-    created_iso = tr.created_at.replace(tzinfo=timezone.utc).isoformat() if tr.created_at else None
+    created_iso = tr.created_at.replace(tzinfo=timezone.utc).isoformat() if tr.created_at else ""
 
     return TranscriptGetResponse(
         transcript_id=tr.id,
@@ -31,6 +67,56 @@ def get_transcript(transcript_id: str, include_text: bool = True):
         device=tr.device,
         compute=tr.compute,
         duration_s=tr.duration_s,
-        created_at=created_iso or "",
+        created_at=created_iso,
         text=text_content,
+        title=tr.title,
+        notes=tr.notes,
     )
+
+
+@router.get("/{transcript_id}/download")
+def download_transcript(transcript_id: str, format: str = Query("txt", regex="^(txt|srt)$")):
+    tr = crud.get_transcript(transcript_id)
+    if not tr:
+        raise HTTPException(status_code=404, detail="transcript not found")
+
+    path = None
+    filename = None
+    if format == "txt":
+        path = Path(tr.text_path)
+        filename = f"{transcript_id}.txt"
+    else:
+        if not tr.srt_path:
+            raise HTTPException(status_code=404, detail="srt not available")
+        path = Path(tr.srt_path)
+        filename = f"{transcript_id}.srt"
+
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="file not found on disk")
+
+    return FileResponse(path, filename=filename, media_type="text/plain")
+
+
+@router.patch("/{transcript_id}", response_model=TranscriptUpdateResponse)
+def update_transcript(transcript_id: str, payload: TranscriptUpdateRequest):
+    tr = crud.get_transcript(transcript_id)
+    if not tr:
+        raise HTTPException(status_code=404, detail="transcript not found")
+
+    title = payload.title if payload.title is not None else tr.title
+    notes = payload.notes if payload.notes is not None else tr.notes
+
+    # write via crud
+    from orate.db.session import get_session
+    from orate.db.models import Transcript as TranscriptModel
+
+    with get_session() as s:
+        obj = s.get(TranscriptModel, transcript_id)
+        if not obj:
+            raise HTTPException(status_code=404, detail="transcript not found")
+        obj.title = title
+        obj.notes = notes
+        s.add(obj)
+        s.commit()
+
+    return TranscriptUpdateResponse(transcript_id=transcript_id, title=title, notes=notes)

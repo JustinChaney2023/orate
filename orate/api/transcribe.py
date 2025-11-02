@@ -1,3 +1,4 @@
+# orate/api/transcribe.py
 from __future__ import annotations
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pathlib import Path
@@ -53,40 +54,44 @@ def _run_transcription_job(job_id: str, payload: TranscribeRequest):
             model=payload.model,
             device=payload.device,
             compute=payload.compute,
-            beam_size=payload.beam_size,
             language=payload.language,
+            srt=payload.srt,
+            beam_size=payload.beam_size,
+            best_of=payload.best_of,
+            temperature=payload.temperature,
             prompt=payload.prompt,
-            word_timestamps=payload.word_timestamps,
+            condition_on_previous_text=payload.condition_on_previous_text,
             vad=payload.vad,
+            word_timestamps=payload.word_timestamps,
         )
 
         crud.update_job_progress(job_id, progress=0.01, stage="loading_model", eta_seconds=None)
 
-        text, info = whisper.transcribe_audio(
+        result = whisper.transcribe_audio(
             audio_path=orig_path,
             out_prefix=out_prefix,
             opts=opts,
-            write_srt=payload.srt,
+            write_srt=bool(payload.srt),
             progress_cb=_progress_cb,
         )
 
         crud.update_job_progress(job_id, progress=0.99, stage="writing_output", eta_seconds=0)
 
         tr_id = storage.new_id("tr")
-        tr = crud.create_transcript(
+        crud.create_transcript(
             id=tr_id,
             recording_id=payload.recording_id,
             text_path=str(out_prefix.with_suffix(".txt")),
             srt_path=str(out_prefix.with_suffix(".srt")) if payload.srt else None,
-            language=getattr(info, "language", None),
-            language_probability=getattr(info, "language_probability", None),
-            model=opts.model,
-            device=opts.device,
-            compute=("float16" if opts.device == "cuda" and not opts.compute else (opts.compute or "int8")),
-            duration_s=getattr(info, "duration", None),
+            language=result.language,
+            language_probability=None,
+            model=opts.resolved().model,
+            device=opts.resolved().device,
+            compute=opts.resolved().compute,
+            duration_s=result.duration_sec,
         )
 
-        crud.update_job_status(job_id, status=JobStatus.done, result_ref=tr.id)
+        crud.update_job_status(job_id, status=JobStatus.done, result_ref=tr_id)
 
     except Exception as e:
         crud.update_job_status(job_id, status=JobStatus.error, error=str(e))
@@ -109,5 +114,4 @@ def create_transcription_job(payload: TranscribeRequest, background: BackgroundT
     )
 
     background.add_task(_run_transcription_job, job_id, payload)
-
     return JobCreateResponse(job_id=job_id, status="queued")

@@ -14,5 +14,27 @@ class TranscriptGetResponse(BaseModel):
     compute: str
     duration_s: Optional[float] = None
     created_at: str
-    # optional inline text (handy for quick UI)
     text: Optional[str] = None
+    title: Optional[str] = None
+    notes: Optional[str] = None
+
+class TranscriptItem(BaseModel):
+    id: str
+    recording_id: str
+    created_at: str
+    language: Optional[str] = None
+    model: str
+    text_preview: str
+    title: Optional[str] = None
+
+class TranscriptListResponse(BaseModel):
+    items: list[TranscriptItem]
+
+class TranscriptUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    notes: Optional[str] = None
+
+class TranscriptUpdateResponse(BaseModel):
+    transcript_id: str
+    title: Optional[str] = None
+    notes: Optional[str] = None

@@ -1,17 +1,28 @@
 from __future__ import annotations
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, List
+
+from sqlalchemy import desc
 from sqlmodel import select
+
 from .session import get_session
 from .models import Recording, Transcript, Job, JobStatus
 
+
 def _now() -> datetime:
+    # store naive UTC in DB for simplicity
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 # ---------- Recordings ----------
-def create_recording(*, id: str, original_ext: str, original_path: str,
-                     duration_s: float, sha256: str) -> Recording:
+def create_recording(
+    *,
+    id: str,
+    original_ext: str,
+    original_path: str,
+    duration_s: float,
+    sha256: str,
+) -> Recording:
     rec = Recording(
         id=id,
         original_ext=original_ext,
@@ -32,11 +43,26 @@ def get_recording(rec_id: str) -> Optional[Recording]:
         return s.get(Recording, rec_id)
 
 
+def list_recordings(limit: int = 50) -> List[Recording]:
+    with get_session() as s:
+        stmt = select(Recording).order_by(desc(Recording.created_at)).limit(limit)
+        return list(s.exec(stmt))
+
+
 # ---------- Transcripts ----------
-def create_transcript(*, id: str, recording_id: str, text_path: str,
-                      srt_path: Optional[str], language: Optional[str],
-                      language_probability: Optional[float], model: str,
-                      device: str, compute: str, duration_s: Optional[float]) -> Transcript:
+def create_transcript(
+    *,
+    id: str,
+    recording_id: str,
+    text_path: str,
+    srt_path: Optional[str],
+    language: Optional[str],
+    language_probability: Optional[float],
+    model: str,
+    device: str,
+    compute: str,
+    duration_s: Optional[float],
+) -> Transcript:
     tr = Transcript(
         id=id,
         recording_id=recording_id,
@@ -62,9 +88,31 @@ def get_transcript(tr_id: str) -> Optional[Transcript]:
         return s.get(Transcript, tr_id)
 
 
+def list_transcripts(limit: int = 50) -> List[Transcript]:
+    with get_session() as s:
+        stmt = select(Transcript).order_by(desc(Transcript.created_at)).limit(limit)
+        return list(s.exec(stmt))
+
+
+def list_transcripts_for_recording(rec_id: str, limit: int = 50) -> List[Transcript]:
+    with get_session() as s:
+        stmt = (
+            select(Transcript)
+            .where(Transcript.recording_id == rec_id)
+            .order_by(desc(Transcript.created_at))
+            .limit(limit)
+        )
+        return list(s.exec(stmt))
+
+
 # ---------- Jobs ----------
-def create_job(*, id: str, kind: str, payload_json: str,
-               status: JobStatus = JobStatus.queued) -> Job:
+def create_job(
+    *,
+    id: str,
+    kind: str,
+    payload_json: str,
+    status: JobStatus = JobStatus.queued,
+) -> Job:
     job = Job(
         id=id,
         kind=kind,
@@ -100,9 +148,13 @@ def mark_job_running(job_id: str) -> None:
         s.commit()
 
 
-def update_job_progress(job_id: str, *, progress: float,
-                        stage: str | None = None,
-                        eta_seconds: float | None = None) -> None:
+def update_job_progress(
+    job_id: str,
+    *,
+    progress: float,
+    stage: str | None = None,
+    eta_seconds: float | None = None,
+) -> None:
     p = max(0.0, min(1.0, float(progress)))
     with get_session() as s:
         job = s.get(Job, job_id)
@@ -117,9 +169,13 @@ def update_job_progress(job_id: str, *, progress: float,
         s.commit()
 
 
-def update_job_status(job_id: str, *, status: JobStatus,
-                      result_ref: Optional[str] = None,
-                      error: Optional[str] = None) -> Optional[Job]:
+def update_job_status(
+    job_id: str,
+    *,
+    status: JobStatus,
+    result_ref: Optional[str] = None,
+    error: Optional[str] = None,
+) -> Optional[Job]:
     with get_session() as s:
         job = s.get(Job, job_id)
         if not job:
