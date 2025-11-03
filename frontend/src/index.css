@@ -10,6 +10,9 @@
   --danger: #ff6b6b;
 }
 
+/* spinner keyframes (used by <Spinner />) */
+@keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
+
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; }
 body {
@@ -69,6 +72,7 @@ body {
 }
 .btn:hover { background: #1e2436; }
 .btn.primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); border-color: transparent; color: #0c1020; font-weight: 600; }
+.btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
 .error { color: var(--danger); }
@@ -79,3 +83,29 @@ body {
   padding: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   resize: vertical;
 }
+
+/* dropdown menu used by <DownloadButton /> */
+.dropdown { position: relative; display: inline-block; }
+.menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  min-width: 160px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px;
+  z-index: 10;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.25);
+}
+.menu .menu-item {
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  width: 100%;
+}
+.menu .menu-item:hover { background: #121a2b; }
