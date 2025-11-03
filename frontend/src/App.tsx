@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { JobGetResponse } from "./api/client";
+import type { JobGetResponse, TranscribeOptions } from "./api/client";
 import {
   uploadAudio,
   startTranscription,
@@ -43,11 +43,33 @@ export default function App() {
   const [title, setTitle] = useState<string>("");
   const [notes, setNotes] = useState<string>("");
 
-  // --- Auto-save state for notes ---
+  // Auto-save status for notes
   const [notesSaving, setNotesSaving] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const notesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastSavedNotesRef = useRef<string>(""); // to avoid redundant PATCHes
-  const currentNotesRequestId = useRef<number>(0); // cancel outdated saves
+  const lastSavedNotesRef = useRef<string>("");
+  const currentNotesRequestId = useRef<number>(0);
+
+  // Advanced panel
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [opts, setOpts] = useState<TranscribeOptions>({
+    // sensible defaults; Start will still work even if you close Advanced
+    model: "small",
+    device: "cpu",
+    compute: "int8",
+    language: null,
+    srt: true,
+
+    beam_size: null,
+    best_of: null,
+    temperature: null,
+    prompt: null,
+    condition_on_previous_text: null,
+    vad: null,
+    word_timestamps: null,
+  });
+
+  // NEW: remember which job we've already notified for
+  const notifiedJobRef = useRef<string | null>(null);
 
   // Load recent transcripts
   useEffect(() => {
@@ -57,6 +79,15 @@ export default function App() {
         setHistory(data.items);
       } catch (e) { console.error(e); }
     })();
+  }, []);
+
+  // NEW: ask for Notification permission once (best-effort, non-blocking)
+  useEffect(() => {
+    if ("Notification" in window && Notification.permission === "default") {
+      setTimeout(() => {
+        try { Notification.requestPermission(); } catch {}
+      }, 300);
+    }
   }, []);
 
   async function handleUpload() {
@@ -74,8 +105,13 @@ export default function App() {
   async function handleTranscribe() {
     if (!recordingId) { alert("Upload something first."); return; }
     try {
-      const job = await startTranscription(recordingId);
+      // If Advanced is open, pass options; otherwise let backend use defaults
+      const maybeOpts = advancedOpen ? opts : undefined;
+      const job = await startTranscription(recordingId, maybeOpts);
       setJobId(job.job_id); setJob(null);
+
+      // NEW: reset notification guard for this job
+      notifiedJobRef.current = null;
     } catch (e: any) { alert(e?.message || "Failed to start transcription"); }
   }
 
@@ -85,11 +121,39 @@ export default function App() {
     let cancelled = false;
     const jid: string = jobId;
 
+    // NEW: small helpers for notifications
+    function notifyDone(transcriptId: string) {
+      if (!("Notification" in window)) return;
+      if (Notification.permission !== "granted") return;
+      const n = new Notification("Orate — Transcription complete", { body: "Click to open the transcript." });
+      n.onclick = () => {
+        window.focus();
+        openTranscript(transcriptId);
+        try { n.close(); } catch {}
+      };
+    }
+    function notifyError(msg?: string) {
+      if (!("Notification" in window)) return;
+      if (Notification.permission !== "granted") return;
+      const n = new Notification("Orate — Transcription failed", { body: msg || "Unknown error." });
+      n.onclick = () => {
+        window.focus();
+        try { n.close(); } catch {}
+      };
+    }
+
     async function poll(id: string) {
       try {
         const j = await getJob(id);
         if (cancelled) return;
         setJob(j);
+
+        // NEW: fire desktop notification exactly once per job when terminal
+        if ((j.status === "done" || j.status === "error") && notifiedJobRef.current !== id) {
+          notifiedJobRef.current = id;
+          if (j.status === "done" && j.result_ref) notifyDone(j.result_ref);
+          else if (j.status === "error") notifyError(j.error || undefined);
+        }
 
         if (j.status === "done" && j.result_ref) {
           const tr = await getTranscript(j.result_ref);
@@ -97,7 +161,6 @@ export default function App() {
             setTranscriptText(tr.text || "");
             setActiveTranscriptId(j.result_ref);
 
-            // Initialize title/notes for editing
             setTitle(tr.title || "");
             setNotes(tr.notes || "");
             lastSavedNotesRef.current = tr.notes || "";
@@ -121,7 +184,6 @@ export default function App() {
   }, [jobId]);
 
   async function openTranscript(tid: string) {
-    // Cancel any pending notes save for the previous transcript
     if (notesTimerRef.current) { clearTimeout(notesTimerRef.current); notesTimerRef.current = null; }
     currentNotesRequestId.current++;
 
@@ -137,7 +199,7 @@ export default function App() {
     } catch (e) { console.error(e); }
   }
 
-  // Manual save for Title (kept as-is)
+  // Manual save for Title
   async function saveMeta() {
     if (!activeTranscriptId) return;
     try {
@@ -149,7 +211,7 @@ export default function App() {
     }
   }
 
-  // --- Auto-save for Notes on change (debounced) ---
+  // Auto-save Notes (debounced)
   useEffect(() => {
     if (!activeTranscriptId) return;
     if (notes === lastSavedNotesRef.current) {
@@ -157,7 +219,6 @@ export default function App() {
       return;
     }
 
-    // debounce 600ms after last keystroke
     if (notesTimerRef.current) clearTimeout(notesTimerRef.current);
     setNotesSaving("saving");
     const requestId = ++currentNotesRequestId.current;
@@ -165,17 +226,14 @@ export default function App() {
     notesTimerRef.current = setTimeout(async () => {
       try {
         await updateTranscript(activeTranscriptId, { notes });
-        // If a newer request started since we began, ignore this completion
         if (requestId !== currentNotesRequestId.current) return;
 
         lastSavedNotesRef.current = notes;
         setNotesSaving("saved");
-        // refresh history snippet/titles
         try {
           const data = await listTranscripts();
           setHistory(data.items);
         } catch {}
-        // fade "saved" back to idle after a moment
         setTimeout(() => { if (notesSaving === "saved") setNotesSaving("idle"); }, 1200);
       } catch (e) {
         if (requestId !== currentNotesRequestId.current) return;
@@ -193,11 +251,45 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [notes, activeTranscriptId]);
 
+  // NEW: auto-refresh history periodically (fast while running, slow when idle)
+  useEffect(() => {
+    let cancelled = false;
+    let interval: any;
+
+    async function refreshNow() {
+      try {
+        const data = await listTranscripts();
+        if (!cancelled) setHistory(data.items);
+      } catch {
+        // ignore best-effort failures
+      }
+    }
+
+    const running = job?.status === "running";
+    refreshNow(); // refresh immediately when this effect runs
+    interval = setInterval(refreshNow, running ? 5000 : 20000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [job?.status]);
+
   function renderEta() {
     if (!job?.eta_seconds || job.eta_seconds <= 0) return "-";
     const s = job.eta_seconds;
     if (s <= 30) return `${Math.ceil(s)}s`;
     return `${Math.ceil(s / 60)} min`;
+  }
+
+  // Advanced UI helper
+  function setOpt<K extends keyof TranscribeOptions>(k: K, v: TranscribeOptions[K]) {
+    setOpts(prev => ({ ...prev, [k]: v }));
+  }
+  function numOrNull(v: string) {
+    if (!v.trim()) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? (n as number) : null;
   }
 
   return (
@@ -251,6 +343,147 @@ export default function App() {
                 }}
               />
             </div>
+          </div>
+
+          {/* Advanced toggle + panel */}
+          <div className="advanced">
+            <button className="btn" onClick={() => setAdvancedOpen(v => !v)}>
+              {advancedOpen ? "Hide Advanced" : "Show Advanced"}
+            </button>
+            {advancedOpen && (
+              <div className="advanced-grid">
+                <div className="field">
+                  <label>Model</label>
+                  <select value={opts.model || ""} onChange={e => setOpt("model", e.target.value || null)}>
+                    <option value="tiny">tiny</option>
+                    <option value="base">base</option>
+                    <option value="small">small</option>
+                    <option value="medium">medium</option>
+                    <option value="large-v3">large-v3</option>
+                  </select>
+                </div>
+
+                <div className="field">
+                  <label>Device</label>
+                  <select value={opts.device || ""} onChange={e => setOpt("device", (e.target.value || "cpu") as any)}>
+                    <option value="cpu">cpu</option>
+                    <option value="cuda">cuda</option>
+                  </select>
+                </div>
+
+                <div className="field">
+                  <label>Compute</label>
+                  <select value={opts.compute || ""} onChange={e => setOpt("compute", (e.target.value || "int8") as any)}>
+                    <option value="int8">int8</option>
+                    <option value="float16">float16</option>
+                  </select>
+                </div>
+
+                <div className="field">
+                  <label>Language (ISO-639-1 or blank)</label>
+                  <input
+                    placeholder="e.g. en"
+                    value={opts.language ?? ""}
+                    onChange={e => setOpt("language", e.target.value.trim() || null)}
+                  />
+                </div>
+
+                <div className="field">
+                  <label>Write SRT</label>
+                  <select value={String(!!opts.srt)} onChange={e => setOpt("srt", e.target.value === "true")}>
+                    <option value="true">true</option>
+                    <option value="false">false</option>
+                  </select>
+                </div>
+
+                <div className="field">
+                  <label>Word timestamps</label>
+                  <select
+                    value={opts.word_timestamps == null ? "null" : String(!!opts.word_timestamps)}
+                    onChange={e => {
+                      const v = e.target.value;
+                      setOpt("word_timestamps", v === "null" ? null : v === "true");
+                    }}
+                  >
+                    <option value="null">(default)</option>
+                    <option value="true">true</option>
+                    <option value="false">false</option>
+                  </select>
+                </div>
+
+                <div className="field">
+                  <label>VAD</label>
+                  <select
+                    value={opts.vad == null ? "null" : String(!!opts.vad)}
+                    onChange={e => {
+                      const v = e.target.value;
+                      setOpt("vad", v === "null" ? null : v === "true");
+                    }}
+                  >
+                    <option value="null">(default)</option>
+                    <option value="true">true</option>
+                    <option value="false">false</option>
+                  </select>
+                </div>
+
+                <div className="field">
+                  <label>Beam size</label>
+                  <input
+                    type="number"
+                    min={1}
+                    placeholder="(default)"
+                    value={opts.beam_size ?? ""}
+                    onChange={e => setOpt("beam_size", numOrNull(e.target.value))}
+                  />
+                </div>
+
+                <div className="field">
+                  <label>Best of</label>
+                  <input
+                    type="number"
+                    min={1}
+                    placeholder="(default)"
+                    value={opts.best_of ?? ""}
+                    onChange={e => setOpt("best_of", numOrNull(e.target.value))}
+                  />
+                </div>
+
+                <div className="field">
+                  <label>Temperature</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    placeholder="(default)"
+                    value={opts.temperature ?? ""}
+                    onChange={e => setOpt("temperature", numOrNull(e.target.value))}
+                  />
+                </div>
+
+                <div className="field" style={{ gridColumn: "1 / -1" }}>
+                  <label>Prompt</label>
+                  <input
+                    placeholder="Optional initial prompt"
+                    value={opts.prompt ?? ""}
+                    onChange={e => setOpt("prompt", e.target.value || null)}
+                  />
+                </div>
+
+                <div className="field">
+                  <label>Condition on previous text</label>
+                  <select
+                    value={opts.condition_on_previous_text == null ? "null" : String(!!opts.condition_on_previous_text)}
+                    onChange={e => {
+                      const v = e.target.value;
+                      setOpt("condition_on_previous_text", v === "null" ? null : v === "true");
+                    }}
+                  >
+                    <option value="null">(default)</option>
+                    <option value="true">true</option>
+                    <option value="false">false</option>
+                  </select>
+                </div>
+              </div>
+            )}
           </div>
 
           {recordingId && (

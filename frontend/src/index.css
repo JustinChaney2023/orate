@@ -10,8 +10,8 @@
   --danger: #ff6b6b;
 }
 
-/* spinner keyframes (used by <Spinner />) */
-@keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
+/* Spinner keyframes (used by .spinner and .autosave.saving::before) */
+@keyframes spin { to { transform: rotate(360deg); } }
 
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; }
@@ -84,33 +84,7 @@ body {
   resize: vertical;
 }
 
-/* dropdown menu used by <DownloadButton /> */
-.dropdown { position: relative; display: inline-block; }
-.menu {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  min-width: 160px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 6px;
-  z-index: 10;
-  box-shadow: 0 6px 24px rgba(0,0,0,0.25);
-}
-.menu .menu-item {
-  background: transparent;
-  color: var(--text);
-  text-align: left;
-  padding: 8px 10px;
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  width: 100%;
-}
-.menu .menu-item:hover { background: #121a2b; }
-
-/* Recorder */
+/* Recorder block */
 .rec { display: flex; flex-direction: column; gap: 6px; min-width: 260px; }
 .rec-row { display: flex; gap: 10px; align-items: center; }
 .rec-timer { font-variant-numeric: tabular-nums; color: var(--muted); }
@@ -125,29 +99,34 @@ body {
   width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent);
   border-radius: 50%; animation: spin 0.8s linear infinite;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
 
-/* Simple dropdown for Download */
-.dropdown { position: relative; }
+/* Download dropdown */
+.dropdown { position: relative; display: inline-block; }
 .dropdown .dropdown-menu {
-  position: absolute; right: 0; top: calc(100% + 6px);
-  background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 6px;
-  display: none; min-width: 160px; z-index: 5;
+  position: absolute; top: calc(100% + 6px); right: 0;
+  min-width: 160px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px;
+  z-index: 10;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.25);
+  display: none;
 }
 .dropdown:hover .dropdown-menu { display: block; }
 .dropdown-menu a {
-  display: block; color: var(--text); text-decoration: none; padding: 8px; border-radius: 8px;
+  display: block; color: var(--text); text-decoration: none; padding: 8px 10px; border-radius: 8px;
 }
 .dropdown-menu a:hover { background: var(--panel-2); }
 
-/* Auto-save status chip */
+/* Auto-save status chip (Notes) */
 .autosave {
   margin-left: 8px;
   font-size: 12px;
   color: var(--muted);
 }
 .autosave.saving::before {
-  content: " ";
+  content: "";
   display: inline-block;
   width: 10px; height: 10px;
   border: 2px solid var(--border);
@@ -159,3 +138,22 @@ body {
 }
 .autosave.saved { color: #8bd17c; }
 .autosave.error { color: var(--danger); }
+
+/* Advanced panel */
+.advanced { margin-top: 12px; }
+.advanced-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+}
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label { font-size: 12px; color: var(--muted); }
+.field input, .field select {
+  padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border);
+  background: #0f1320; color: var(--text);
+}

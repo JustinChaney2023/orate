@@ -72,6 +72,23 @@ export type TranscriptUpdateResponse = {
   notes?: string | null;
 };
 
+/** Transcribe options (match backend schema; all optional) */
+export type TranscribeOptions = {
+  model?: string | null;                 // tiny/base/small/medium/large-v3 or custom path
+  device?: "cpu" | "cuda" | string | null;
+  compute?: "int8" | "float16" | string | null;
+  language?: string | null;
+  srt?: boolean | null;
+
+  beam_size?: number | null;
+  best_of?: number | null;
+  temperature?: number | null;
+  prompt?: string | null;
+  condition_on_previous_text?: boolean | null;
+  vad?: boolean | null;
+  word_timestamps?: boolean | null;
+};
+
 /** ----- API calls ----- */
 export async function uploadAudio(file: File): Promise<RecordingCreateResponse> {
   const form = new FormData();
@@ -85,44 +102,21 @@ export async function uploadAudio(file: File): Promise<RecordingCreateResponse> 
   try { return JSON.parse(text); } catch { throw new Error(`Upload: invalid JSON: ${text.slice(0, 200)}`); }
 }
 
-/** Upload with progress (0–100). Falls back to plain upload if XHR fails. */
-export function uploadAudioWithProgress(
-  file: File,
-  onProgress: (pct: number) => void
-): Promise<RecordingCreateResponse> {
-  return new Promise((resolve, reject) => {
-    try {
-      const xhr = new XMLHttpRequest();
-      xhr.open("POST", `${API_BASE}/api/recordings`);
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try { resolve(JSON.parse(xhr.responseText)); }
-          catch { reject(new Error(`Upload: invalid JSON: ${xhr.responseText?.slice(0,200)}`)); }
-        } else {
-          reject(new Error(`Upload failed (${xhr.status}): ${xhr.statusText}`));
-        }
-      };
-      xhr.onerror = () => reject(new Error("Upload network error"));
-      xhr.upload.onprogress = (evt) => {
-        if (!evt.lengthComputable) { onProgress(-1); return; }
-        const pct = Math.max(0, Math.min(100, Math.round((evt.loaded / evt.total) * 100)));
-        onProgress(pct);
-      };
-      const form = new FormData();
-      form.append("file", file);
-      xhr.send(form);
-    } catch (e) {
-      // Fallback
-      uploadAudio(file).then(resolve).catch(reject);
+/** Start transcription with optional advanced options. If opts omitted, backend defaults apply. */
+export async function startTranscription(
+  recording_id: string,
+  opts?: TranscribeOptions
+): Promise<JobCreateResponse> {
+  const body: any = { recording_id };
+  if (opts) {
+    for (const [k, v] of Object.entries(opts)) {
+      if (v !== undefined) body[k] = v;
     }
-  });
-}
-
-export async function startTranscription(recording_id: string): Promise<JobCreateResponse> {
+  }
   const res = await fetch(`${API_BASE}/api/transcribe`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ recording_id, model: "small", device: "cpu", srt: true }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`Transcribe start failed: ${res.status}`);
   return res.json();
