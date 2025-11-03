@@ -109,3 +109,53 @@ body {
   width: 100%;
 }
 .menu .menu-item:hover { background: #121a2b; }
+
+/* Recorder */
+.rec { display: flex; flex-direction: column; gap: 6px; min-width: 260px; }
+.rec-row { display: flex; gap: 10px; align-items: center; }
+.rec-timer { font-variant-numeric: tabular-nums; color: var(--muted); }
+.rec-meter { flex: 1; height: 8px; background: #0f1320; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; }
+.rec-meter > span { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+
+.btn.danger { background: #2a1212; border-color: #3a1717; color: #ffd7d7; }
+.btn.danger:hover { background: #3a1515; }
+
+.rec-upload { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.spinner {
+  width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Simple dropdown for Download */
+.dropdown { position: relative; }
+.dropdown .dropdown-menu {
+  position: absolute; right: 0; top: calc(100% + 6px);
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 6px;
+  display: none; min-width: 160px; z-index: 5;
+}
+.dropdown:hover .dropdown-menu { display: block; }
+.dropdown-menu a {
+  display: block; color: var(--text); text-decoration: none; padding: 8px; border-radius: 8px;
+}
+.dropdown-menu a:hover { background: var(--panel-2); }
+
+/* Auto-save status chip */
+.autosave {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.autosave.saving::before {
+  content: " ";
+  display: inline-block;
+  width: 10px; height: 10px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: -1px;
+  animation: spin 0.8s linear infinite;
+}
+.autosave.saved { color: #8bd17c; }
+.autosave.error { color: var(--danger); }

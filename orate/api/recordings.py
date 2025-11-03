@@ -21,7 +21,8 @@ async def create_recording(file: UploadFile = File(...)):
 
     filename = file.filename or "audio.mp3"
     ext = Path(filename).suffix or ".mp3"
-    if ext.lower() not in {".mp3", ".wav", ".m4a", ".mp4", ".aac", ".flac", ".ogg"}:
+    # ✅ Added ".webm" here
+    if ext.lower() not in {".mp3", ".wav", ".m4a", ".mp4", ".aac", ".flac", ".ogg", ".webm"}:
         ext = ".mp3"
 
     rec_id = storage.new_id("rec")
