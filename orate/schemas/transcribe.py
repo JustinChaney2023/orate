@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Optional
 from pydantic import BaseModel
 
-
 class TranscribeRequest(BaseModel):
     # required
     recording_id: str
@@ -23,3 +22,6 @@ class TranscribeRequest(BaseModel):
     condition_on_previous_text: Optional[bool] = None
     vad: Optional[bool] = None
     word_timestamps: Optional[bool] = None
+
+    # NEW: speaker diarization (pyannote) – optional
+    diarize: Optional[bool] = None

@@ -1,10 +1,11 @@
 # orate/services/whisper.py
 from __future__ import annotations
 
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 from pathlib import Path
 import time
 import hashlib
+import os
 
 from pydantic import BaseModel, ConfigDict, field_validator
 from faster_whisper import WhisperModel
@@ -25,6 +26,9 @@ class TranscribeOpts(BaseModel):
     prompt: Optional[str] = None
     condition_on_previous_text: Optional[bool] = None
     word_timestamps: Optional[bool] = None
+
+    # NEW: diarization toggle
+    diarize: Optional[bool] = None
 
     # ignore future/unknown keys so UI changes don't break API
     model_config = ConfigDict(extra="ignore")
@@ -51,6 +55,7 @@ class TranscribeOpts(BaseModel):
             prompt=self.prompt,
             condition_on_previous_text=self.condition_on_previous_text,
             word_timestamps=self.word_timestamps,
+            diarize=self.diarize,
         )
 
 
@@ -93,6 +98,62 @@ def load_model(opts: TranscribeOpts) -> WhisperModel:
     return m
 
 
+def _try_diarize(audio_path: Path) -> Optional[List[Tuple[float, float, str]]]:
+    """Return list of (start, end, speaker) or None if diarization unavailable."""
+    try:
+        from pyannote.audio import Pipeline
+    except Exception:
+        return None
+
+    token = os.getenv("PYANNOTE_AUTH_TOKEN")
+    try:
+        if token:
+            pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization", use_auth_token=token)
+        else:
+            # Some environments may work without a token if cached.
+            pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization")
+        diar = pipeline(str(audio_path))
+        entries: List[Tuple[float, float, str]] = []
+        for segment, _, label in diar.itertracks(yield_label=True):
+            entries.append((float(segment.start), float(segment.end), str(label)))
+        # Normalize speaker labels to Speaker 1..N
+        uniq = {}
+        next_id = 1
+        normed: List[Tuple[float, float, str]] = []
+        for s, e, lab in entries:
+            if lab not in uniq:
+                uniq[lab] = f"Speaker {next_id}"
+                next_id += 1
+            normed.append((s, e, uniq[lab]))
+        return normed
+    except Exception:
+        return None
+
+
+def _assign_speakers_to_segments(
+    whisper_segments,
+    diar_segments: List[Tuple[float, float, str]]
+) -> Dict[int, str]:
+    """Greedy overlap: for each whisper segment i, choose speaker with max overlap."""
+    def overlap(a0, a1, b0, b1):
+        lo = max(a0, b0)
+        hi = min(a1, b1)
+        return max(0.0, hi - lo)
+
+    mapping: Dict[int, str] = {}
+    for i, seg in enumerate(whisper_segments):
+        best_spk = None
+        best_ov = 0.0
+        for (s0, s1, spk) in diar_segments:
+            ov = overlap(seg.start, seg.end, s0, s1)
+            if ov > best_ov:
+                best_ov = ov
+                best_spk = spk
+        if best_spk:
+            mapping[i] = best_spk
+    return mapping
+
+
 def transcribe_audio(
     audio_path: Path,
     out_prefix: Path,
@@ -133,25 +194,33 @@ def transcribe_audio(
 
     segments, info = model.transcribe(str(audio_path), **tx_kwargs)
 
+    # Optional diarization
+    diar_segments = _try_diarize(audio_path) if o.diarize else None
+    speaker_by_index: Dict[int, str] = {}
+    if diar_segments:
+        speaker_by_index = _assign_speakers_to_segments(segments, diar_segments)
+
     txt_lines = []
     srt_lines = []
     seg_index = 1
 
-    for seg in segments:
+    def fmt(ts: float) -> str:
+        h = int(ts // 3600)
+        m = int((ts % 3600) // 60)
+        s = int(ts % 60)
+        ms = int((ts - int(ts)) * 1000)
+        return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+    for i, seg in enumerate(segments):
         _proxy_progress(seg)
-        txt_lines.append(seg.text.strip())
+        spk = speaker_by_index.get(i)
+        prefix = f"{spk}: " if spk else ""
+        txt_lines.append(prefix + seg.text.strip())
 
         if write_srt:
-            def fmt(ts: float) -> str:
-                h = int(ts // 3600)
-                m = int((ts % 3600) // 60)
-                s = int(ts % 60)
-                ms = int((ts - int(ts)) * 1000)
-                return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
-
             srt_lines.append(str(seg_index))
             srt_lines.append(f"{fmt(seg.start)} --> {fmt(seg.end)}")
-            srt_lines.append(seg.text.strip())
+            srt_lines.append(prefix + seg.text.strip())
             srt_lines.append("")
             seg_index += 1
 

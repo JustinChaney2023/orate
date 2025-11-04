@@ -1,9 +1,10 @@
 from __future__ import annotations
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response, status
 from fastapi.responses import FileResponse
 from pathlib import Path
 from datetime import timezone
 import re
+from urllib.parse import quote
 
 from orate.db import crud
 from orate.schemas.transcripts import (
@@ -16,21 +17,6 @@ from orate.schemas.transcripts import (
 
 router = APIRouter(prefix="/api/transcripts", tags=["transcripts"])
 
-def _safe_filename(name: str, fallback: str) -> str:
-    """
-    Create a safe filename from a title; fall back to provided fallback if
-    the result is empty. Keeps letters, numbers, spaces, dashes, underscores,
-    and dots; collapses whitespace; trims length.
-    """
-    # collapse whitespace
-    name = " ".join((name or "").strip().split())
-    # remove invalid chars
-    name = re.sub(r"[^A-Za-z0-9\-\._ ]+", "", name)
-    # if empty after cleaning, use fallback
-    if not name:
-        name = fallback
-    # hard cap length so we don't hit OS limits
-    return name[:120]
 
 @router.get("", response_model=TranscriptListResponse)
 def list_transcripts(limit: int = Query(50, ge=1, le=200), recording_id: str | None = None):
@@ -58,6 +44,7 @@ def list_transcripts(limit: int = Query(50, ge=1, le=200), recording_id: str | N
         )
 
     return TranscriptListResponse(items=items)
+
 
 @router.get("/{transcript_id}", response_model=TranscriptGetResponse)
 def get_transcript(transcript_id: str, include_text: bool = True):
@@ -88,28 +75,43 @@ def get_transcript(transcript_id: str, include_text: bool = True):
         notes=tr.notes,
     )
 
+
+def _safe_filename(title: str | None, fallback: str, ext: str) -> str:
+    name = (title or "").strip()
+    name = re.sub(r"\s+", " ", name)
+    name = re.sub(r"[^A-Za-z0-9 _\.\-]", "", name)
+    name = name.strip()
+    if not name:
+        name = fallback
+    name = name[:60]
+    name = name.replace(" ", "_")
+    if not ext.startswith("."):
+        ext = "." + ext
+    return f"{name}{ext}"
+
+
 @router.get("/{transcript_id}/download")
-def download_transcript(transcript_id: str, format: str = Query("txt", regex="^(txt|srt)$")):
+def download_transcript(transcript_id: str, format: str = Query("txt", pattern="^(txt|srt)$")):
     tr = crud.get_transcript(transcript_id)
     if not tr:
         raise HTTPException(status_code=404, detail="transcript not found")
 
-    # Construct preferred filename from title (or fallback to transcript_id)
-    base_name = _safe_filename(tr.title or "", fallback=transcript_id)
-
     if format == "txt":
         path = Path(tr.text_path)
-        filename = f"{base_name}.txt"
+        ext = ".txt"
     else:
         if not tr.srt_path:
             raise HTTPException(status_code=404, detail="srt not available")
         path = Path(tr.srt_path)
-        filename = f"{base_name}.srt"
+        ext = ".srt"
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="file not found on disk")
 
-    return FileResponse(path, filename=filename, media_type="text/plain")
+    fname = _safe_filename(tr.title, transcript_id, ext)
+    headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}"}
+    return FileResponse(path, media_type="text/plain; charset=utf-8", headers=headers)
+
 
 @router.patch("/{transcript_id}", response_model=TranscriptUpdateResponse)
 def update_transcript(transcript_id: str, payload: TranscriptUpdateRequest):
@@ -134,3 +136,28 @@ def update_transcript(transcript_id: str, payload: TranscriptUpdateRequest):
         s.commit()
 
     return TranscriptUpdateResponse(transcript_id=transcript_id, title=title, notes=notes)
+
+
+@router.delete("/{transcript_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_transcript(transcript_id: str):
+    """Delete transcript row and its files on disk."""
+    tr = crud.get_transcript(transcript_id)
+    if not tr:
+        raise HTTPException(status_code=404, detail="transcript not found")
+
+    # Best-effort delete artifacts from disk
+    for p in [tr.text_path, tr.srt_path]:
+        if p:
+            try:
+                path = Path(p)
+                if path.exists():
+                    path.unlink(missing_ok=True)
+            except Exception:
+                # ignore filesystem issues; DB delete still proceeds
+                pass
+
+    ok = crud.delete_transcript(transcript_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="transcript not found")
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

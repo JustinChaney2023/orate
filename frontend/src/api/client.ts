@@ -87,6 +87,9 @@ export type TranscribeOptions = {
   condition_on_previous_text?: boolean | null;
   vad?: boolean | null;
   word_timestamps?: boolean | null;
+
+  /** UI-only for now; intentionally not sent to backend until integration lands */
+  diarize?: boolean | null;
 };
 
 /** ----- API calls ----- */
@@ -110,7 +113,9 @@ export async function startTranscription(
   const body: any = { recording_id };
   if (opts) {
     for (const [k, v] of Object.entries(opts)) {
-      if (v !== undefined) body[k] = v;
+      if (v === undefined) continue;
+      if (k === "diarize") continue; // UI-only: do not send to backend yet
+      body[k] = v;
     }
   }
   const res = await fetch(`${API_BASE}/api/transcribe`, {
@@ -161,4 +166,10 @@ export async function updateTranscript(
   });
   if (!res.ok) throw new Error(`Transcript update failed: ${res.status}`);
   return res.json();
+}
+
+/** Optional: delete transcript */
+export async function deleteTranscript(transcript_id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/transcripts/${transcript_id}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`Transcript delete failed: ${res.status}`);
 }

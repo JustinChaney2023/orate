@@ -1,23 +1,23 @@
-type Props = {
-  value: number; // 0–100
+export default function ProgressBar({
+  value,
+  label,
+}: {
+  value: number | undefined | null; // expects 0..1
   label?: string;
-};
+}) {
+  const v = Number.isFinite(value as number) ? Math.max(0, Math.min(1, Number(value))) : 0;
+  const pct = Math.round(v * 100);
 
-export default function ProgressBar({ value, label }: Props) {
-  const pct = Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
   return (
-    <div style={{ width: "100%", gap: 8, display: "grid" }}>
-      {label && <div style={{ fontSize: 12, opacity: 0.8 }}>{label}</div>}
-      <div style={{ background: "#1a2236", borderRadius: 10, height: 10, overflow: "hidden", border: "1px solid var(--border)" }}>
-        <div
-          style={{
-            width: `${pct}%`,
-            height: "100%",
-            background: "linear-gradient(90deg, #4f8cff, #72f1b8)",
-            transition: "width 160ms linear",
-          }}
-        />
-      </div>
+    <div
+      className="pbar"
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={pct}
+    >
+      <div className="pbar-fill" style={{ width: `${pct}%` }} />
+      <span className="pbar-text">{label ?? `${pct}%`}</span>
     </div>
   );
 }

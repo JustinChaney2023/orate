@@ -63,6 +63,7 @@ def _run_transcription_job(job_id: str, payload: TranscribeRequest):
             condition_on_previous_text=payload.condition_on_previous_text,
             vad=payload.vad,
             word_timestamps=payload.word_timestamps,
+            diarize=payload.diarize,  # NEW
         )
 
         crud.update_job_progress(job_id, progress=0.01, stage="loading_model", eta_seconds=None)

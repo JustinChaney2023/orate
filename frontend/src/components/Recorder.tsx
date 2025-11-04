@@ -1,198 +1,246 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { uploadAudio, startTranscription, type JobCreateResponse } from "../api/client";
 
 type Props = {
+  /** If true, call startTranscription automatically after successful upload */
+  autoStartTranscribe?: boolean;
+  /** Callback when upload finishes (recording id + optional job if auto-started) */
   onUploaded?: (recordingId: string, job?: JobCreateResponse) => void;
-  autoStartTranscribe?: boolean; // default true
 };
 
-export default function Recorder({ onUploaded, autoStartTranscribe = true }: Props) {
-  const [recState, setRecState] = useState<"idle" | "recording" | "stopping" | "uploading">("idle");
-  const [err, setErr] = useState<string | null>(null);
-  const [elapsed, setElapsed] = useState<number>(0);
-  const [level, setLevel] = useState<number>(0);
-  const [uploadPct, setUploadPct] = useState<number>(0);
+export default function Recorder({ autoStartTranscribe = true, onUploaded }: Props) {
+  const [recSupported, setRecSupported] = useState<boolean>(!!(navigator.mediaDevices && window.MediaRecorder));
+  const [recording, setRecording] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [level, setLevel] = useState(0);
+  const [elapsedMs, setElapsedMs] = useState(0);
 
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const mediaRecRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const startedAtRef = useRef<number>(0);
-
-  // audio meter
-  const audioCtxRef = useRef<AudioContext | null>(null);
+  const mrRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<BlobPart[]>([]);
+  const ctxRef = useRef<AudioContext | null>(null);
+  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
-  const rafRef = useRef<number | null>(null);
+  const meterTimerRef = useRef<number | null>(null);
+  const tickTimerRef = useRef<number | null>(null);
 
-  const stopMeter = () => {
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    rafRef.current = null;
-    if (audioCtxRef.current) {
-      try { audioCtxRef.current.close(); } catch {}
-    }
-    audioCtxRef.current = null;
-    analyserRef.current = null;
-  };
-
-  const tick = useCallback(() => {
-    // timer
-    if (recState === "recording" && startedAtRef.current > 0) {
-      setElapsed((Date.now() - startedAtRef.current) / 1000);
-    }
-    // meter
-    const analyser = analyserRef.current;
-    if (analyser) {
-      const buf = new Uint8Array(analyser.fftSize);
-      analyser.getByteTimeDomainData(buf);
-      // crude RMS
-      let sum = 0;
-      for (let i = 0; i < buf.length; i++) {
-        const v = (buf[i] - 128) / 128;
-        sum += v * v;
-      }
-      const rms = Math.sqrt(sum / buf.length);
-      setLevel(rms);
-    }
-    rafRef.current = requestAnimationFrame(tick);
-  }, [recState]);
+  const startTsRef = useRef<number>(0);
+  const pausedAtRef = useRef<number | null>(null);
+  const pausedAccumRef = useRef<number>(0);
 
   useEffect(() => {
-    if (recState === "recording" && !rafRef.current) {
-      rafRef.current = requestAnimationFrame(tick);
+    setRecSupported(!!(navigator.mediaDevices && window.MediaRecorder));
+    return () => stopAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function startTimer() {
+    startTsRef.current = performance.now();
+    pausedAccumRef.current = 0;
+    pausedAtRef.current = null;
+    setElapsedMs(0);
+    tickTimerRef.current = window.setInterval(() => {
+      const now = performance.now();
+      const pausedDelta = pausedAccumRef.current;
+      const base = now - startTsRef.current - pausedDelta;
+      setElapsedMs(Math.max(0, Math.floor(base)));
+    }, 200);
+  }
+
+  function pauseTimer() {
+    if (pausedAtRef.current == null) {
+      pausedAtRef.current = performance.now();
     }
-    return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    };
-  }, [recState, tick]);
+  }
 
-  const start = async () => {
-    setErr(null);
-    setElapsed(0);
-    setUploadPct(0);
+  function resumeTimer() {
+    if (pausedAtRef.current != null) {
+      pausedAccumRef.current += performance.now() - pausedAtRef.current;
+      pausedAtRef.current = null;
+    }
+  }
 
+  function stopTimer() {
+    if (tickTimerRef.current) {
+      clearInterval(tickTimerRef.current);
+      tickTimerRef.current = null;
+    }
+  }
+
+  async function startRec() {
+    if (!recSupported || recording) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaStreamRef.current = stream;
+      const mr = new MediaRecorder(stream);
+      mrRef.current = mr;
 
-      // set up meter
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      audioCtxRef.current = ctx;
-      const src = ctx.createMediaStreamSource(stream);
+      const ctx = new AudioContext();
+      ctxRef.current = ctx;
+      const source = ctx.createMediaStreamSource(stream);
+      sourceRef.current = source;
       const analyser = ctx.createAnalyser();
-      analyser.fftSize = 1024;
-      src.connect(analyser);
+      analyser.fftSize = 2048;
       analyserRef.current = analyser;
+      source.connect(analyser);
 
-      const mime =
-        MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-          ? "audio/webm;codecs=opus"
-          : (MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "");
-
-      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
       chunksRef.current = [];
       mr.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
       };
-      mr.onstop = async () => {
-        try {
-          setRecState("uploading");
-          stopMeter();
+      mr.start(250); // collect small chunks periodically
 
-          const blob = new Blob(chunksRef.current, { type: mr.mimeType || "audio/webm" });
-          const filename = `mic-${Date.now()}.webm`;
-          const file = new File([blob], filename, { type: blob.type });
-
-          // upload with progress
-          // fetch doesn’t expose upload progress; use XHR here
-          const form = new FormData();
-          form.append("file", file);
-
-          const uploadRes = await new Promise<Response>((resolve, reject) => {
-            const xhr = new XMLHttpRequest();
-            xhr.open("POST", "/api/recordings");
-            xhr.upload.onprogress = (e) => {
-              if (e.lengthComputable) setUploadPct(Math.round((e.loaded / e.total) * 100));
-            };
-            xhr.onload = () => {
-              resolve(new Response(xhr.responseText, { status: xhr.status }));
-            };
-            xhr.onerror = reject;
-            xhr.send(form);
-          });
-
-          if (!uploadRes.ok) {
-            const txt = await uploadRes.text();
-            throw new Error(`Upload failed (${uploadRes.status}): ${txt}`);
-          }
-          const rec = await uploadRes.json() as Awaited<ReturnType<typeof uploadAudio>>;
-
-          let job;
-          if (autoStartTranscribe) {
-            job = await startTranscription(rec.recording_id);
-          }
-          setRecState("idle");
-          onUploaded?.(rec.recording_id, job);
-        } catch (e: any) {
-          setErr(e?.message || String(e));
-          setRecState("idle");
-        } finally {
-          // cleanup stream
-          mediaStreamRef.current?.getTracks().forEach(t => t.stop());
-          mediaStreamRef.current = null;
-          mediaRecRef.current = null;
-        }
-      };
-
-      mr.start(200); // collect chunks every 200ms
-      mediaRecRef.current = mr;
-      startedAtRef.current = Date.now();
-      setRecState("recording");
-    } catch (e: any) {
-      setErr(e?.message || "Mic permission denied or unavailable");
-      setRecState("idle");
+      setRecording(true);
+      setPaused(false);
+      startTimer();
+      startMeter();
+    } catch (e) {
+      console.error(e);
+      alert("Microphone permission or recording failed.");
     }
-  };
+  }
 
-  const stop = async () => {
-    if (recState !== "recording") return;
-    setRecState("stopping");
+  function pauseRec() {
+    const mr = mrRef.current;
+    if (!mr || !recording || paused) return;
     try {
-      mediaRecRef.current?.stop();
-    } catch {
-      setRecState("idle");
-      stopMeter();
-      mediaStreamRef.current?.getTracks().forEach(t => t.stop());
-      mediaStreamRef.current = null;
-      mediaRecRef.current = null;
+      mr.pause();
+      setPaused(true);
+      pauseTimer();
+    } catch (e) {
+      console.error(e);
     }
-  };
+  }
 
-  const seconds = Math.floor(elapsed % 60);
-  const minutes = Math.floor(elapsed / 60);
-  const barWidth = Math.min(100, Math.max(2, Math.round(level * 100)));
+  function resumeRec() {
+    const mr = mrRef.current;
+    if (!mr || !recording || !paused) return;
+    try {
+      mr.resume();
+      setPaused(false);
+      resumeTimer();
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function stopRec() {
+    const mr = mrRef.current;
+    if (!mr || !recording) return;
+    try {
+      mr.stop();
+      mr.stream.getTracks().forEach((t) => t.stop());
+    } catch {}
+    stopAll();
+
+    // Build final Blob (webm/opus most common)
+    const blob = new Blob(chunksRef.current, { type: mr?.mimeType || "audio/webm" });
+    chunksRef.current = [];
+
+    // Upload
+    setUploading(true);
+    try {
+      const file = new File([blob], "recording.webm", { type: blob.type || "audio/webm" });
+      const rec = await uploadAudio(file);
+
+      let job: JobCreateResponse | undefined;
+      if (autoStartTranscribe) {
+        job = await startTranscription(rec.recording_id);
+      }
+      onUploaded?.(rec.recording_id, job);
+    } catch (e: any) {
+      console.error(e);
+      alert(e?.message || "Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function stopAll() {
+    setRecording(false);
+    setPaused(false);
+    stopTimer();
+    stopMeter();
+
+    try { mrRef.current?.stream.getTracks().forEach(t => t.stop()); } catch {}
+    mrRef.current = null;
+
+    try { analyserRef.current?.disconnect(); } catch {}
+    try { sourceRef.current?.disconnect(); } catch {}
+    analyserRef.current = null;
+    sourceRef.current = null;
+
+    try { ctxRef.current?.close(); } catch {}
+    ctxRef.current = null;
+  }
+
+  function startMeter() {
+    if (!analyserRef.current) return;
+    const analyser = analyserRef.current;
+    const buf = new Uint8Array(analyser.frequencyBinCount);
+
+    const tick = () => {
+      analyser.getByteTimeDomainData(buf);
+      // Rough amplitude estimate
+      let peak = 0;
+      for (let i = 0; i < buf.length; i++) {
+        const v = Math.abs(buf[i] - 128) / 128;
+        if (v > peak) peak = v;
+      }
+      setLevel(Math.min(1, peak * 2));
+      meterTimerRef.current = window.requestAnimationFrame(tick);
+    };
+    meterTimerRef.current = window.requestAnimationFrame(tick);
+  }
+
+  function stopMeter() {
+    if (meterTimerRef.current) {
+      cancelAnimationFrame(meterTimerRef.current);
+      meterTimerRef.current = null;
+    }
+    setLevel(0);
+  }
+
+  function fmt(ms: number) {
+    const sec = Math.floor(ms / 1000);
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}:${s.toString().padStart(2, "0")}`;
+  }
 
   return (
     <div className="rec">
       <div className="rec-row">
-        {recState === "recording" ? (
-          <button className="btn danger" onClick={stop} title="Stop recording">■ Stop</button>
-        ) : (
-          <button className="btn" onClick={start} title="Start recording">● Record</button>
+        {!recording && (
+          <button className="btn" onClick={startRec} disabled={!recSupported}>
+            Record
+          </button>
         )}
-        <div className="rec-timer">{minutes}:{seconds.toString().padStart(2, "0")}</div>
-        <div className="rec-meter" aria-hidden>
-          <span style={{ width: `${barWidth}%` }} />
-        </div>
+        {recording && !paused && (
+          <button className="btn" onClick={pauseRec}>
+            Pause
+          </button>
+        )}
+        {recording && paused && (
+          <button className="btn" onClick={resumeRec}>
+            Resume
+          </button>
+        )}
+        {recording && (
+          <button className="btn danger" onClick={stopRec}>
+            Stop & Upload
+          </button>
+        )}
+
+        <div className="rec-timer">{recording ? fmt(elapsedMs) : "0:00"}</div>
       </div>
 
-      {recState === "uploading" && (
+      <div className="rec-row">
+        <div className="rec-meter"><span style={{ width: `${Math.floor(level * 100)}%` }} /></div>
         <div className="rec-upload">
-          <div className="spinner" />
-          <div>Uploading… {uploadPct}%</div>
+          {uploading ? <span className="spinner" /> : null}
+          {uploading ? "Uploading…" : ""}
         </div>
-      )}
-
-      {err && <div className="error" style={{ marginTop: 6 }}>{err}</div>}
+      </div>
     </div>
   );
 }

@@ -105,6 +105,17 @@ def list_transcripts_for_recording(rec_id: str, limit: int = 50) -> List[Transcr
         return list(s.exec(stmt))
 
 
+def delete_transcript(tr_id: str) -> bool:
+    """Delete the transcript row. Returns True if deleted, False if not found."""
+    with get_session() as s:
+        obj = s.get(Transcript, tr_id)
+        if not obj:
+            return False
+        s.delete(obj)
+        s.commit()
+        return True
+
+
 # ---------- Jobs ----------
 def create_job(
     *,
